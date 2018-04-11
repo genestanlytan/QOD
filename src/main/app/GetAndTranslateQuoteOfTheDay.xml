@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns:email="http://www.mulesoft.org/schema/mule/email" xmlns:jbossts="http://www.mulesoft.org/schema/mule/jbossts"
+	xmlns:jms="http://www.mulesoft.org/schema/mule/jms" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata"
+	xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/jbossts http://www.mulesoft.org/schema/mule/jbossts/current/mule-jbossts.xsd
+http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+
+	<json:object-to-json-transformer
+		mimeType="application/json" name="Object_to_JSON" doc:name="Object to JSON" />
+	<flow name="GetAndTranslateQuoteOfTheDay">
+		<http:listener config-ref="HTTP_Listener_Configuration"
+			path="/sample" doc:name="HTTP" />
+		<flow-ref name="GetQuoteOfTheDay:flow" doc:name="GetQuoteOfTheDay:flow" />
+		<set-variable variableName="quote"
+			value="#[message.payload.contents.quotes[0].quote]" doc:name="setQuoteVariable" />
+		<set-payload
+			value="#[payload.contents.quotes[0].quote] #[payload.contents.quotes[0].author] #[server.dateTime] #[&quot;\n&quot;]"
+			doc:name="composeFilePayload" />
+		<flow-ref name="WriteToFile:subflow" doc:name="WriteToFile:subflow" />
+		<flow-ref name="TranslateAndCompress:subflow" doc:name="TranslateAndCompress:subflow" />
+		<jms:outbound-endpoint topic="QOD"
+			connector-ref="Active_MQ" doc:name="publishJMSTopic">
+			<jms:transaction action="NONE" />
+		</jms:outbound-endpoint>
+	</flow>
+	<sub-flow name="TranslateAndCompress:subflow">
+		<set-variable variableName="quoteList" value="#[[]]"
+			doc:name="initializeQuoteList" />
+		<set-variable variableName="languages" value="${lang}"
+			doc:name="initializeLanguageList" />
+		<expression-transformer expression="#[flowVars.languages.split(',')]"
+			doc:name="splitLanguageListToArray" />
+		<foreach doc:name="For Each Language" collection="#[payload]">
+			<set-variable variableName="lang" value="#[message.payload]"
+				doc:name="setLanguageVariable" />
+			<flow-ref name="TranslateQuote:flow" doc:name="TranslateQuote:flow" />
+            <dw:transform-message doc:name="createCompressedResponse" metadata:id="7ae9b92f-8b79-47d6-a11f-91000e3e37ad">
+                <dw:input-payload mimeType="application/json"/>
+                <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+{
+	lang: flowVars.lang,
+	text: payload.text[0] replace " " with "",
+	index: payload.text[0] find ' '
+} as :object {
+	class : "java.util.HashMap"
+}]]></dw:set-payload>
+            </dw:transform-message>
+            <expression-component doc:name="addResponseToQuoteList"><![CDATA[flowVars.quoteList.add(payload)]]></expression-component>
+
+		</foreach>
+		<set-payload value="#[flowVars.quoteList]" doc:name="setQuoteListPayload" />
+		<json:object-to-json-transformer
+			doc:name="transfromQuoteListObjectToJSON" />
+	</sub-flow>
+	<flow name="ActiveMQSubscribe">
+		<jms:inbound-endpoint topic="QOD" connector-ref="Active_MQ1"
+			doc:name="subscribeJMSTopic" />
+		<dw:transform-message doc:name="convertPayloadToJavaObject">
+			<dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload]]></dw:set-payload>
+		</dw:transform-message>
+		<json:json-to-object-transformer
+			returnClass="java.util.ArrayList" doc:name="convertJsonToArrayList" />
+		<foreach collection="payload" doc:name="For Each quoteObject">
+			<set-variable variableName="translatedQuote" value="#[payload]"
+				doc:name="set translatedQuote" />
+			<set-payload
+				value="#[payload.text]  #[server.nanoTime()] #[&quot;\n&quot;]"
+				doc:name="composeTranslatedQuotePayload" />
+			<flow-ref name="WriteToFile:subflow" doc:name="WriteToFile:subflow" />
+			<flow-ref name="DecompressQuote:subflow" doc:name="DecompressQuote:subflow" />
+		</foreach>
+	</flow>
+
+	<sub-flow name="DecompressQuote:subflow">
+		<set-variable variableName="decompressed" value=""
+			doc:name="initializeDecompressedVariable" />
+		<expression-component doc:name="setDecompressedStringBuilder"><![CDATA[StringBuilder sb = new StringBuilder();
+sb.append(flowVars.translatedQuote.text);
+flowVars.decompressed=sb;
+]]></expression-component>
+		<foreach collection="#[flowVars.translatedQuote.index]"
+			doc:name="For Each Index">
+			<expression-component doc:name="insertSpaceToUncompressedVariable"><![CDATA[flowVars.decompressed.insert(payload, " ");]]></expression-component>
+		</foreach>
+		<logger message="Decompressed Quote: #[flowVars.decompressed.toString()]"
+			level="INFO" doc:name="logDecompressedQuote" />
+	</sub-flow>
+</mule>

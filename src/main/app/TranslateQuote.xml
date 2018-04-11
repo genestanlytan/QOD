@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit"
+	xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd"
+>
+
+	<flow name="TranslateQuote:flow">
+		<http:request config-ref="TranslateHTTPRequestConnection"
+			path="translate" method="GET" doc:name="translate api endpoint">
+			<http:request-builder>
+                <http:query-param paramName="key" value="${yandex.key}"/>
+                <http:query-param paramName="text" value="#[flowVars.quote]"/>
+                <http:query-param paramName="lang" value="en-#[message.payload]"/>
+                <http:query-param paramName="format" value="plain"/>
+			</http:request-builder>
+		</http:request>
+		<json:json-to-object-transformer
+			doc:name="convertJSONResponseToObject" />
+		<logger message="Translate API Response #[flowVars.lang] : #[payload]"
+			level="INFO" doc:name="logTranslateApiResponse" />
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <set-payload value="Unable to access translate api at the moment" doc:name="Set Payload"/>
+            <logger message="message.payload" level="INFO" doc:name="Logger"/>
+        </catch-exception-strategy>
+	</flow>
+
+</mule>
